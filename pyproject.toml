@@ -1,0 +1,11 @@
+[project]
+name = "peloton-workout-extract"
+version = "1.0.0"
+description = "Extract structured metadata and Power Zone breakdowns from Peloton workout pages"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.59.0",
+]
+
+[project.scripts]
+peloton-extract = "peloton_extract:main"
