@@ -101,9 +101,11 @@ def format_class_timestamp(raw: str) -> str:
     # Strip day-of-week prefix (e.g. "Thursday, " or "Thu ")
     text = re.sub(r"^[A-Za-z]+,?\s*", "", raw.strip())
 
-    # Extract timezone abbreviation from the end
+    # Extract timezone abbreviation from the end (but not AM/PM)
     tz_match = re.search(r"\b([A-Z]{2,4})$", text)
     tz_abbr = tz_match.group(1) if tz_match else ""
+    if tz_abbr in ("AM", "PM"):
+        tz_abbr = ""
     if tz_abbr:
         text = text[:tz_match.start()].strip()
 
@@ -119,8 +121,12 @@ def format_class_timestamp(raw: str) -> str:
             offset = _TZ_OFFSETS.get(tz_abbr)
             if offset is not None:
                 offset_str = f"{offset:+03d}"
+            elif tz_abbr:
+                offset_str = tz_abbr
             else:
-                offset_str = tz_abbr or "?"
+                # No timezone — guess ET based on month (EST Nov-Mar, EDT Mar-Nov)
+                is_dst = 3 <= dt.month <= 10
+                offset_str = "-04" if is_dst else "-05"
             return f"{dt:%Y-%m-%d %H:%M} ({offset_str})"
         except ValueError:
             continue
