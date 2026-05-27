@@ -77,6 +77,59 @@ def parse_segment_duration_text(text: str) -> int:
     return int(m.group(1)) * 60 if m else 0
 
 
+# Timezone abbreviation → UTC offset hours
+_TZ_OFFSETS = {
+    "EST": -5, "EDT": -4,
+    "CST": -6, "CDT": -5,
+    "MST": -7, "MDT": -6,
+    "PST": -8, "PDT": -7,
+    "ET": -5, "CT": -6, "MT": -7, "PT": -8,
+}
+
+
+def format_class_timestamp(raw: str) -> str:
+    """Convert Peloton class timestamp to 'YYYY-MM-DD HH:mm (ZZ)' format.
+
+    Input examples:
+        "Thursday, April 17, 2026 @ 7:00 AM PDT"
+        "Fri 4/2/26 @ 3:30 AM"
+    Output: "2026-04-17 07:00 (-07)"
+    """
+    if not raw:
+        return raw
+
+    # Strip day-of-week prefix (e.g. "Thursday, " or "Thu ")
+    text = re.sub(r"^[A-Za-z]+,?\s*", "", raw.strip())
+
+    # Extract timezone abbreviation from the end
+    tz_match = re.search(r"\b([A-Z]{2,4})$", text)
+    tz_abbr = tz_match.group(1) if tz_match else ""
+    if tz_abbr:
+        text = text[:tz_match.start()].strip()
+
+    # Try parsing common Peloton formats
+    for fmt in (
+        "%B %d, %Y @ %I:%M %p",   # "April 17, 2026 @ 7:00 AM"
+        "%b %d, %Y @ %I:%M %p",   # "Apr 17, 2026 @ 7:00 AM"
+        "%m/%d/%y @ %I:%M %p",    # "4/2/26 @ 3:30 AM"
+        "%m/%d/%Y @ %I:%M %p",    # "4/2/2026 @ 3:30 AM"
+    ):
+        try:
+            dt = datetime.strptime(text, fmt)
+            offset = _TZ_OFFSETS.get(tz_abbr)
+            if offset is not None:
+                offset_str = f"{offset:+03d}"
+            else:
+                offset_str = tz_abbr or "?"
+            return f"{dt:%Y-%m-%d %H:%M} ({offset_str})"
+        except ValueError:
+            continue
+
+    # Fallback: return raw value unchanged
+    log.warning(f"Could not parse class timestamp: {raw!r}")
+    return raw
+
+
 # ---------------------------------------------------------------------------
 # Page data extraction
 # ---------------------------------------------------------------------------
@@ -164,7 +217,7 @@ def extract_workout_metadata(page: Page, workout_id: str) -> dict:
         for i in range(spans.count()):
             text = spans.nth(i).text_content().strip().replace("\xa0", " ")
             if text.startswith("From "):
-                result["class_timestamp"] = text[5:]  # strip "From " prefix
+                result["class_timestamp"] = format_class_timestamp(text[5:])
                 break
 
         # Discipline label (second occurrence, e.g. "CYCLING")
