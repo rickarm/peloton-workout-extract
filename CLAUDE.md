@@ -29,3 +29,6 @@ Extract structured metadata + Power Zone breakdowns from Peloton workout detail 
 
 - Cookie banner appears on first visit even with saved session — script dismisses it automatically
 - `OP_SERVICE_ACCOUNT_TOKEN` must be exported before running (source `~/.openclaw/.env`)
+- `class_timestamp` must be formatted as `YYYY-MM-DD HH:mm (ZZ)` (e.g. `2026-04-17 07:00 (-07)`) to match the Peloton-Rides Airtable table. `format_class_timestamp()` handles this.
+- Peloton timestamps without timezone (e.g. `Mon 11/24/25 @ 6:30 AM`) default to ET (EST/EDT by month). `AM`/`PM` must be excluded from timezone regex matching.
+- Airtable sync workflow is defined in the skill file (`~/.claude/skills/peloton-extract/SKILL.md`), not here — that's the source of truth for field mappings, duplicate checks, and instructor lookup.
