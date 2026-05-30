@@ -442,19 +442,14 @@ def extract_single_workout(
     if metadata["extraction_status"] == "failed":
         return metadata
 
-    # Extract class plan for cycling/tread power zone rides
-    has_plan = metadata.get("discipline") in ("cycling", "tread") and "Power Zone" in metadata.get("ride_title", "")
-    if has_plan:
+    # Extract class plan for cycling/tread rides (any ride may have zone segments)
+    if metadata.get("discipline") in ("cycling", "tread"):
         metadata = extract_class_plan(page, metadata)
     else:
-        if metadata.get("discipline") != "cycling":
-            metadata["extraction_status"] = "minimal"
-            metadata["extraction_warnings"].append(
-                f"No class plan available — discipline={metadata.get('discipline', 'unknown')}"
-            )
-        elif "Power Zone" not in metadata.get("ride_title", ""):
-            metadata["extraction_status"] = "minimal"
-            metadata["extraction_warnings"].append("No class plan — not a Power Zone ride")
+        metadata["extraction_status"] = "minimal"
+        metadata["extraction_warnings"].append(
+            f"No class plan available — discipline={metadata.get('discipline', 'unknown')}"
+        )
 
     return metadata
 
