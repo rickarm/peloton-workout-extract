@@ -1,0 +1,16 @@
+# CI for this repo. The actual steps live ONCE in rickarm/ci-shared so all
+# repos stay in lockstep — to change CI behaviour, edit the reusable workflow
+# there, not this file. See https://github.com/rickarm/ci-shared#readme
+#
+# Pinned to @main: every run uses the latest shared definition.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  ci:
+    uses: rickarm/ci-shared/.github/workflows/python-ci.yml@main

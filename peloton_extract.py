@@ -155,8 +155,7 @@ def extract_workout_metadata(page: Page, workout_id: str) -> dict:
         result["extraction_warnings"].append("workoutBasicInfoBlock not found")
         return result
 
-    # The timestamp is in a div before the h1 title
-    ts_div = info_block.locator("div").first
+    # The timestamp is in a div before the h1 title.
     # Navigate into the inner structure: the block has nested divs
     # Structure: workoutBasicInfoBlock > div > div.timestamp, h1.title, spans
     inner = info_block.locator("> div > div").first
