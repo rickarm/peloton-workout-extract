@@ -47,6 +47,65 @@ uv run python peloton_extract.py <url> --format jsonl
 uv run python peloton_extract.py <url> --dry-run
 ```
 
+## Workout IDs (`peloton_workout_ids.py`)
+
+The Peloton CSV export has no workout ID column, so an Airtable row synced from
+it can't be linked back to `members.onepeloton.com/profile/workouts/<id>`. This
+tool pulls the IDs from the Peloton API and emits them alongside a
+`workout_timestamp` in the exact shape the CSV uses, so the downstream sync can
+join the two on its existing merge key.
+
+```bash
+source ~/.openclaw/.env && export OP_SERVICE_ACCOUNT_TOKEN
+
+# 100 most recent workouts (default)
+./peloton-workout-ids.sh
+
+# Everything on the account, as CSV — the one-off backfill
+./peloton-workout-ids.sh --all --format csv --output-file /tmp/workout-ids.csv
+
+# Only what the last sync could have missed
+./peloton-workout-ids.sh --all --since 2026-08-01 --format csv
+
+# Force a new browser login (the cached token is reused until it expires)
+./peloton-workout-ids.sh --refresh-session --headed
+```
+
+| Column | Notes |
+|--------|-------|
+| `workout_id` | 32-char hex — the `<id>` in the workout URL |
+| `workout_timestamp` | `YYYY-MM-DD HH:MM` in the workout's own timezone; the CSV merge key |
+| `start_time_utc` | ISO-8601 UTC, for unambiguous ordering |
+| `timezone` | IANA name Peloton recorded, e.g. `America/New_York`, `Etc/GMT+7` |
+| `fitness_discipline`, `workout_type`, `status`, `device_type` | Straight from the API |
+| `class_id` | `ride.id` — the Peloton-Rides key. Null for freestyle/Apple Health workouts |
+| `class_title` | Useful as a tiebreaker (see below) |
+
+### Joining to the CSV
+
+Normalize the CSV's `Workout Timestamp` the way the Airtable sync already does
+(strip the trailing `(PDT)` / `(-07)`) and match it against `workout_timestamp`.
+Measured against a full export of 2,743 rows on 2026-08-21:
+
+- 2,729 rows (99.5%) matched exactly one workout ID
+- 8 more resolved once `class_title` broke a same-minute tie
+- 6 rows stayed ambiguous — three pairs of workouts that started in the same
+  minute *and* were the same class (2020-04-24, 2022-03-22 ×2)
+- 0 rows failed to match
+
+The API also returns workouts the CSV export omits — 68 of them, mostly
+`cardio` and Apple Health imports — so expect more API records than CSV rows.
+
+### Auth
+
+Peloton retired `POST /auth/login` (it now answers 403 "Endpoint no longer
+accepting requests"), so the API is reachable only with the Auth0 access token
+the members web app keeps in `localStorage`. That store is part of the
+Playwright session `auth.py` already persists, so the saved browser session
+doubles as an API credential. The token lasts 48h; the tool reuses it while
+it's fresh and silently drives a headless browser to mint a new one when it
+isn't.
+
 ## Output
 
 ```json
@@ -96,9 +155,13 @@ uv run python peloton_extract.py <url> --dry-run
 
 | File | Purpose |
 |------|---------|
-| `peloton_extract.py` | CLI entrypoint |
+| `peloton_extract.py` | CLI entrypoint — workout page scraping |
+| `peloton_csv_download.py` | CLI entrypoint — workout CSV export |
+| `peloton_workout_ids.py` | CLI entrypoint — workout IDs from the Peloton API |
+| `peloton_api.py` | Peloton REST client (token extraction, paging, merge-key formatting) |
 | `pel_selectors.py` | Playwright selector inventory (update here when Peloton changes UI) |
 | `auth.py` | 1Password credential fetch + session persistence |
+| `tests/` | Unit tests for the pure logic — no network, no browser |
 
 ## Notes
 
