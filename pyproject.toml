@@ -9,3 +9,4 @@ dependencies = [
 
 [project.scripts]
 peloton-extract = "peloton_extract:main"
+peloton-workout-ids = "peloton_workout_ids:main"
