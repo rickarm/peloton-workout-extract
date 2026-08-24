@@ -24,7 +24,9 @@ import argparse
 import csv
 import io
 import json
+import re
 import sys
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,7 +37,12 @@ from peloton_api import (
 )
 from peloton_workout_ids import get_token
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+
+# Peloton ids are 32 lowercase hex characters.
+ID_RE = re.compile(r"^[0-9a-f]{32}$")
+CLASS_URL_MARKER = "/classes/"
+WORKOUT_URL_MARKER = "/profile/workouts/"
 
 # Peloton's power zones are 1-7; the table has a column per zone.
 ZONE_NUMBERS = range(1, 8)
@@ -52,7 +59,73 @@ CSV_COLUMNS = [
     "is_ftp_test",
     "class_types",
     "class_url",
+    "segment_count",
 ] + [f"zone{n}_sec" for n in ZONE_NUMBERS]
+
+
+def _bare_id(text: str) -> str | None:
+    candidate = text.strip()
+    return candidate if ID_RE.match(candidate) else None
+
+
+def class_id_from_text(text: str) -> str:
+    """Accept a class URL or a bare class id and return the id.
+
+    Class URLs carry the id in a `classId` query parameter, alongside params
+    that must be ignored: `categorySlug` is cosmetic and `code` is a share
+    token tied to the account that generated it, so requiring it would make a
+    link unusable by anyone else.
+
+    A workout URL is rejected rather than accepted, because its id is a
+    *workout* id — resolving it as a class id would quietly look up the wrong
+    thing, or nothing at all.
+    """
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("empty class id")
+
+    bare = _bare_id(text)
+    if bare:
+        return bare
+
+    if WORKOUT_URL_MARKER in text:
+        raise ValueError(
+            f"that is a workout URL, not a class URL: {text}. "
+            "Pass it with --workout-id instead."
+        )
+
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(text).query)
+    for value in query.get("classId", []):
+        found = _bare_id(value)
+        if found:
+            return found
+
+    raise ValueError(f"no class id found in {text!r}")
+
+
+def workout_id_from_text(text: str) -> str:
+    """Accept a workout URL or a bare workout id and return the id."""
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("empty workout id")
+
+    bare = _bare_id(text)
+    if bare:
+        return bare
+
+    if CLASS_URL_MARKER in text or "classId=" in text:
+        raise ValueError(
+            f"that is a class URL, not a workout URL: {text}. "
+            "Pass it with --class-id instead."
+        )
+
+    path = urllib.parse.urlparse(text).path
+    if WORKOUT_URL_MARKER in path:
+        found = _bare_id(path.rsplit("/", 1)[-1])
+        if found:
+            return found
+
+    raise ValueError(f"no workout id found in {text!r}")
 
 
 def read_stdin_ids() -> list[str]:
@@ -94,9 +167,15 @@ def resolve_all(
 
 
 def flatten_for_csv(record: dict) -> dict:
+    """One CSV row per class.
+
+    The segment plan is a list, which a CSV cell cannot carry usefully, so the
+    row reports its length and callers who need the sequence use json/jsonl.
+    """
     zones = record.get("zones") or {}
     row = {k: record.get(k) for k in CSV_COLUMNS}
     row["class_types"] = "|".join(record.get("class_types") or [])
+    row["segment_count"] = len(record.get("segments") or [])
     for n in ZONE_NUMBERS:
         row[f"zone{n}_sec"] = zones.get(n)
     return row
@@ -130,12 +209,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Resolve Peloton class metadata by class id or workout id"
     )
     parser.add_argument(
-        "--class-id", action="append", default=[], metavar="ID",
-        help="Class id to resolve (repeatable)",
+        "--class-id", action="append", default=[], metavar="ID_OR_URL",
+        help="Class id, or a class URL to read it from (repeatable)",
     )
     parser.add_argument(
-        "--workout-id", action="append", default=[], metavar="ID",
-        help="Workout id whose class should be resolved (repeatable)",
+        "--workout-id", action="append", default=[], metavar="ID_OR_URL",
+        help="Workout id, or a workout URL, whose class should be resolved (repeatable)",
     )
     parser.add_argument(
         "--stdin", action="store_true",
@@ -166,17 +245,26 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    class_ids = list(args.class_id)
-    workout_ids = list(args.workout_id)
+    raw_classes = list(args.class_id)
+    raw_workouts = list(args.workout_id)
     if args.stdin:
         piped = read_stdin_ids()
         if args.stdin_is_workouts:
-            workout_ids += piped
+            raw_workouts += piped
         else:
-            class_ids += piped
+            raw_classes += piped
 
-    if not class_ids and not workout_ids:
+    if not raw_classes and not raw_workouts:
         parser.error("give at least one --class-id, --workout-id, or --stdin")
+
+    # Parse every input up front: a typo in the tenth URL should fail before
+    # the first nine have been fetched.
+    try:
+        class_ids = [class_id_from_text(v) for v in raw_classes]
+        workout_ids = [workout_id_from_text(v) for v in raw_workouts]
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     try:
         api = PelotonAPI(get_token(args.refresh_session, args.headed))

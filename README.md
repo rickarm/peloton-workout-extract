@@ -111,20 +111,37 @@ isn't.
 Resolves what a class *was* — title, instructor, duration, and its planned
 power-zone breakdown — straight from the API, by class ID or by workout ID.
 
+Works on classes you have **never taken**, so you can preview a ride's zone plan
+before committing to it.
+
 ```bash
 # By class ID
 ./peloton-class-resolve.sh --class-id f3105dfcd6a0445eab35d50c5b207c80
 
-# By workout ID — the class link comes from `ride.id`, so it is a fact, not a guess
+# By class URL — extra params like categorySlug and the account-tied `code=`
+# share token are ignored; only `classId` matters
+./peloton-class-resolve.sh --class-id "https://members.onepeloton.com/classes/cycling?modal=classDetailsModal&classId=f3105dfcd6a0445eab35d50c5b207c80"
+
+# By workout ID or workout URL — the class link comes from `ride.id`,
+# so it is a fact, not a guess
 ./peloton-class-resolve.sh --workout-id c9b9d832b80a4352a63c5c80df5aa0e9
 
 # Many at once, as a CSV ready to join against Airtable
 ./peloton-class-resolve.sh --stdin --format csv < class-ids.txt
 ```
 
+Passing a workout URL to `--class-id` (or the reverse) is an error naming the
+right flag, rather than a silent lookup of the wrong thing.
+
 Each record carries `class_timestamp` in the `YYYY-MM-DD HH:mm (ZZ)` shape the
-`Peloton-Rides` table keys on, and `zones` as a zone-number to planned-seconds
-map (the CSV format flattens this to `zone1_sec` ... `zone7_sec`).
+`Peloton-Rides` table keys on, plus the plan in two forms:
+
+- `zones` — zone number to total planned seconds. CSV flattens this to
+  `zone1_sec` ... `zone7_sec`.
+- `segments` — the ordered plan, `{zone, start_sec, end_sec, duration_sec}` per
+  block. A repeated zone stays as separate entries here, because three separate
+  minutes in zone 5 is a different ride from one three-minute block. CSV reports
+  only `segment_count`; use `json`/`jsonl` for the sequence.
 
 This supersedes scraping the class page for metadata, and supersedes matching a
 workout to a class by score. Three things are worth knowing:
