@@ -106,6 +106,37 @@ doubles as an API credential. The token lasts 48h; the tool reuses it while
 it's fresh and silently drives a headless browser to mint a new one when it
 isn't.
 
+## Class metadata (`peloton_class_resolve.py`)
+
+Resolves what a class *was* — title, instructor, duration, and its planned
+power-zone breakdown — straight from the API, by class ID or by workout ID.
+
+```bash
+# By class ID
+./peloton-class-resolve.sh --class-id f3105dfcd6a0445eab35d50c5b207c80
+
+# By workout ID — the class link comes from `ride.id`, so it is a fact, not a guess
+./peloton-class-resolve.sh --workout-id c9b9d832b80a4352a63c5c80df5aa0e9
+
+# Many at once, as a CSV ready to join against Airtable
+./peloton-class-resolve.sh --stdin --format csv < class-ids.txt
+```
+
+Each record carries `class_timestamp` in the `YYYY-MM-DD HH:mm (ZZ)` shape the
+`Peloton-Rides` table keys on, and `zones` as a zone-number to planned-seconds
+map (the CSV format flattens this to `zone1_sec` ... `zone7_sec`).
+
+This supersedes scraping the class page for metadata, and supersedes matching a
+workout to a class by score. Three things are worth knowing:
+
+- **Zone offsets are inclusive**, so a 60..359 segment is 300 seconds. The
+  totals reconcile exactly with what the Playwright scrape used to store.
+- **Classes are keyed on `scheduled_start_time`**, not `original_air_time` —
+  the latter is when the stream actually rolled, several minutes before the
+  published slot, and would mint a near-duplicate row for every class.
+- A workout with no class (freestyle, Apple Health) returns
+  `{"workout_id": ..., "class_id": null}` rather than being dropped.
+
 ## Output
 
 ```json
@@ -158,6 +189,7 @@ isn't.
 | `peloton_extract.py` | CLI entrypoint — workout page scraping |
 | `peloton_csv_download.py` | CLI entrypoint — workout CSV export |
 | `peloton_workout_ids.py` | CLI entrypoint — workout IDs from the Peloton API |
+| `peloton_class_resolve.py` | CLI entrypoint — class metadata and planned power zones |
 | `peloton_api.py` | Peloton REST client (token extraction, paging, merge-key formatting) |
 | `pel_selectors.py` | Playwright selector inventory (update here when Peloton changes UI) |
 | `auth.py` | 1Password credential fetch + session persistence |
