@@ -168,6 +168,9 @@ class PelotonAPI:
         self.access_token = access_token
         self.timeout = timeout
         self.page_pause = page_pause
+        # A handful of instructors account for nearly every class, and a
+        # backfill resolves the same few hundreds of times.
+        self._instructor_names: dict[str, str | None] = {}
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         url = f"{API_BASE}{path}"
@@ -206,6 +209,85 @@ class PelotonAPI:
             raise PelotonAPIError("Peloton /api/me returned no user id")
         return uid
 
+    def workout(self, workout_id: str) -> dict:
+        return self._get(f"/api/workout/{workout_id}")
+
+    def ride(self, class_id: str) -> dict:
+        return self._get(f"/api/ride/{class_id}")
+
+    def ride_details(self, class_id: str) -> dict:
+        """Ride plus its planned power-zone segments and embedded instructor."""
+        return self._get(f"/api/ride/{class_id}/details")
+
+    def instructor_name(self, instructor_id: str | None) -> str | None:
+        """Resolve an instructor id to a display name, caching hits and misses.
+
+        A miss is cached too: an instructor Peloton no longer serves would
+        otherwise be re-requested once per class that references them.
+        """
+        if not instructor_id:
+            return None
+        if instructor_id in self._instructor_names:
+            return self._instructor_names[instructor_id]
+        name = _instructor_display_name(self._get(f"/api/instructor/{instructor_id}"))
+        self._instructor_names[instructor_id] = name
+        return name
+
+    def class_id_for_workout(self, workout_id: str) -> str | None:
+        """The class a workout was taken from, or None when it had none.
+
+        Freestyle and Apple-Health workouts carry the all-zero sentinel rather
+        than omitting the join; forcing those onto a class would point every
+        one of them at the same phantom row.
+        """
+        ride = self.workout(workout_id).get("ride") or {}
+        class_id = ride.get("id")
+        return None if class_id == NULL_CLASS_ID else class_id
+
+    def class_target_zones(self, class_id: str) -> dict[int, int]:
+        """Planned seconds per power zone for a class."""
+        return sum_target_zones(self.ride_details(class_id))
+
+    def resolve_class(self, class_id: str, tz_name: str | None = None) -> dict:
+        """Normalized class metadata, in one request where Peloton allows it.
+
+        `/api/ride/<id>/details` already embeds the ride and its instructor, so
+        the common path costs a single call. The `/api/instructor/<id>` lookup
+        is only reached when that embed is absent.
+        """
+        if not class_id or class_id == NULL_CLASS_ID:
+            raise ValueError("resolve_class needs a real class id, not the null sentinel")
+        details = self.ride_details(class_id)
+        ride = details.get("ride") or {}
+        embedded = ride.get("instructor") or {}
+        instructor = _instructor_display_name(embedded) if embedded else None
+        if instructor is None:
+            instructor = self.instructor_name(ride.get("instructor_id"))
+        duration = ride.get("duration")
+        discipline = ride.get("fitness_discipline") or "cycling"
+        return {
+            "class_id": class_id,
+            "title": ride.get("title"),
+            "instructor": instructor,
+            "instructor_id": ride.get("instructor_id"),
+            "duration_sec": duration,
+            "duration_min": round(duration / 60) if isinstance(duration, int) else None,
+            "fitness_discipline": ride.get("fitness_discipline"),
+            "original_air_time": ride.get("original_air_time"),
+            "scheduled_start_time": ride.get("scheduled_start_time"),
+            "class_timestamp": format_class_air_time(class_air_time(ride), tz_name),
+            "difficulty_rating_avg": ride.get("difficulty_rating_avg"),
+            "description": ride.get("description"),
+            "image_url": ride.get("image_url"),
+            "is_power_zone_class": details.get("is_power_zone_class"),
+            "is_ftp_test": details.get("is_ftp_test"),
+            "class_types": [
+                t.get("name") for t in (details.get("class_types") or []) if t.get("name")
+            ],
+            "zones": sum_target_zones(details),
+            "class_url": CLASS_URL_TEMPLATE.format(discipline=discipline, class_id=class_id),
+        }
+
     def iter_workout_pages(
         self, user_id: str, page_size: int = MAX_PAGE_SIZE, joins: str = "ride"
     ):
@@ -232,3 +314,93 @@ class PelotonAPI:
                 return
             if self.page_pause:
                 time.sleep(self.page_pause)
+
+
+# ---------------------------------------------------------------------------
+# Class metadata
+# ---------------------------------------------------------------------------
+
+# `Peloton-Rides` rows link to the stable class-detail modal rather than to a
+# particular workout, so the URL stays valid for a class Rick has not taken.
+CLASS_URL_TEMPLATE = (
+    "https://members.onepeloton.com/classes/{discipline}"
+    "?modal=classDetailsModal&classId={class_id}"
+)
+
+# The timezone `Peloton-Rides` renders `ClassTimestamp` in. Peloton stores
+# `original_air_time` as a UTC epoch and has no opinion about how to display it.
+DEFAULT_CLASS_TZ = "America/Los_Angeles"
+
+
+def format_class_air_time(epoch: int | None, tz_name: str | None = None) -> str | None:
+    """Render a class air time as Airtable's `YYYY-MM-DD HH:mm (ZZ)`.
+
+    Same output shape as `peloton_extract.format_class_timestamp`, but from the
+    API's UTC epoch instead of a scraped display string. `tz_name` defaults to
+    UTC so the library stays deterministic; callers that write to Airtable pass
+    `DEFAULT_CLASS_TZ`.
+    """
+    if epoch is None:
+        return None
+    tz = timezone.utc
+    if tz_name:
+        try:
+            tz = ZoneInfo(tz_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            tz = timezone.utc
+    moment = datetime.fromtimestamp(epoch, tz)
+    # "%z" gives "-0700"; Airtable stores the hour only.
+    return f"{moment.strftime('%Y-%m-%d %H:%M')} ({moment.strftime('%z')[:3]})"
+
+
+def class_air_time(ride: dict) -> int | None:
+    """The epoch a class is keyed by: its scheduled slot, not when video rolled.
+
+    Peloton exposes both. `original_air_time` is when the stream actually
+    started, which lands a few minutes early and carries seconds
+    (`2026-01-02 22:25:05Z`); `scheduled_start_time` is the round slot the
+    class is published and referenced as (`22:30:00Z`). `Peloton-Rides` keys
+    on the scheduled slot, so using the air time would mint a near-duplicate
+    row for every class already in the table.
+    """
+    scheduled = ride.get("scheduled_start_time")
+    if isinstance(scheduled, int) and scheduled > 0:
+        return scheduled
+    return ride.get("original_air_time")
+
+
+def sum_target_zones(details: dict) -> dict[int, int]:
+    """Total planned seconds per power zone from a `/api/ride/<id>/details` body.
+
+    Segment offsets are **inclusive** on both ends, so a segment running 60..359
+    is 300 seconds, not 299. Getting that wrong under-counts every class by one
+    second per segment, which is small enough to look like rounding and large
+    enough to stop the totals reconciling against the scraper's stored values.
+
+    Segments whose offsets are missing or inverted are skipped rather than
+    allowed to contribute a negative duration.
+    """
+    zones: dict[int, int] = {}
+    metrics = (details.get("target_metrics_data") or {}).get("target_metrics") or []
+    for segment in metrics:
+        offsets = segment.get("offsets") or {}
+        start, end = offsets.get("start"), offsets.get("end")
+        if not isinstance(start, int) or not isinstance(end, int) or end < start:
+            continue
+        seconds = end - start + 1
+        for metric in segment.get("metrics") or []:
+            if metric.get("name") != "power_zone":
+                continue
+            zone = metric.get("lower")
+            if isinstance(zone, int):
+                zones[zone] = zones.get(zone, 0) + seconds
+    return zones
+
+
+def _instructor_display_name(payload: dict) -> str | None:
+    name = (payload.get("name") or "").strip()
+    if name:
+        return name
+    parts = [payload.get("first_name") or "", payload.get("last_name") or ""]
+    joined = " ".join(p for p in parts if p).strip()
+    return joined or None

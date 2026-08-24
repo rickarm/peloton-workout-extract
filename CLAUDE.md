@@ -7,6 +7,7 @@ Extract structured metadata + Power Zone breakdowns from Peloton workout detail 
 - **Run extract**: `~/Dev/peloton-workout-extract/peloton-extract.sh <URL> [--dry-run] [--headed] [--format jsonl]`
 - **Run CSV download**: `~/Dev/peloton-workout-extract/peloton-csv-download.sh [--headed] [--output-dir /tmp]`
 - **Run workout-ID export**: `~/Dev/peloton-workout-extract/peloton-workout-ids.sh [--all|--limit N] [--since YYYY-MM-DD] [--format json|jsonl|csv] [--output-file PATH]`
+- **Run class resolve**: `~/Dev/peloton-workout-extract/peloton-class-resolve.sh [--class-id ID ...] [--workout-id ID ...] [--stdin] [--format json|jsonl|csv] [--timezone ZONE]`
 - **1Password item**: `op://Vault-agent-mandy/www.onepeloton.com/{username,password}` (no 2FA)
 - **Session cache**: `~/.cache/peloton-skill/storage_state.json` (chmod 600)
 - **Debug logs**: `~/.cache/peloton-skill/logs/`
@@ -19,12 +20,14 @@ Extract structured metadata + Power Zone breakdowns from Peloton workout detail 
 | `peloton_extract.py` | CLI entrypoint — validates URLs, orchestrates browser, emits JSON |
 | `peloton_csv_download.py` | CLI entrypoint for CSV export via headless Playwright |
 | `peloton_workout_ids.py` | CLI entrypoint — workout IDs from the Peloton API, keyed by the CSV merge key |
+| `peloton_class_resolve.py` | CLI entrypoint — class metadata + planned power zones, by class ID or workout ID |
 | `peloton_api.py` | Peloton REST client — token extraction, paging, timestamp formatting |
 | `pel_selectors.py` | Single dict of Playwright selectors (update here when Peloton changes UI) |
 | `auth.py` | 1Password credential fetch + Playwright session persistence |
 | `peloton-extract.sh` | Shell wrapper for extract (sources 1Password token, invokes uv) |
 | `peloton-csv-download.sh` | Shell wrapper for CSV download (sources 1Password token, invokes uv) |
 | `peloton-workout-ids.sh` | Shell wrapper for workout-ID export (sources 1Password token, invokes uv) |
+| `peloton-class-resolve.sh` | Shell wrapper for class resolve (sources 1Password token, invokes uv) |
 
 ## Key behaviors
 
@@ -43,6 +46,36 @@ Extract structured metadata + Power Zone breakdowns from Peloton workout detail 
 - The CSV's `Workout Timestamp` equals `start_time` rendered in that workout's **own** `timezone` (Peloton emits POSIX-style `Etc/GMT+7` = UTC-7 alongside IANA names). That equality is what makes the join work — verified against 2,743 rows.
 - Freestyle / Apple Health workouts carry `ride.id` = 32 zeros, not a missing join. `normalize_workout()` maps that to null so they don't all link to one phantom class.
 - The API returns more workouts than the CSV export does (2,811 vs 2,743) — the export drops most `cardio` and Apple-Health-imported activity.
+
+## Class metadata from the API
+
+`peloton_class_resolve.py` replaces the Playwright class scrape and the fuzzy
+score-matching for any workout whose ID is known. The class link is a fact
+(`ride.id`), not a score.
+
+- `GET /api/ride/<id>/details` is the workhorse: it embeds the ride, the
+  instructor, and `target_metrics_data`, so a class costs **one** request.
+  `/api/ride/<id>` + `/api/instructor/<id>` is only the fallback when that
+  payload has no embedded instructor. Instructor names are cached per client,
+  misses included.
+- **Zone segment offsets are inclusive on both ends** — a segment running
+  60..359 is 300 seconds, not 299. `sum_target_zones()` handles this; the
+  totals reconcile exactly against the values the old scraper stored.
+- **Key classes on `scheduled_start_time`, not `original_air_time`.** The air
+  time is when the stream actually rolled — a few minutes early, with seconds
+  (`2026-01-02 22:25:05Z` against a `22:30:00Z` slot). `Peloton-Rides` keys on
+  the scheduled slot, so using the air time mints a near-duplicate row for
+  every class already in the table. `class_air_time()` picks the right one.
+- Existing `ClassTimestamp` values in Airtable carry **mislabelled offsets**
+  (`2026-01-02 14:30 (-05)` is a Pacific wall clock with an Eastern label —
+  the scraper's ET-default bug). The wall-clock time matches what this tool
+  emits; the offset does not. Match on the time, not the label.
+- A workout with no class resolves to `{"workout_id": ..., "class_id": null}`
+  rather than being dropped, so "no class" stays distinguishable from "not
+  looked up".
+- `PowerZoneType` is **not** derivable from the class title — a generic
+  "Power Zone Ride" splits across PZ Max and Threshold. Classifying it needs
+  the planned zone distribution. Nothing here writes that field.
 
 ## Gotchas
 
