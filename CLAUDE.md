@@ -7,7 +7,7 @@ Extract structured metadata + Power Zone breakdowns from Peloton workout detail 
 - **Run extract**: `~/Dev/peloton-workout-extract/peloton-extract.sh <URL> [--dry-run] [--headed] [--format jsonl]`
 - **Run CSV download**: `~/Dev/peloton-workout-extract/peloton-csv-download.sh [--headed] [--output-dir /tmp]`
 - **Run workout-ID export**: `~/Dev/peloton-workout-extract/peloton-workout-ids.sh [--all|--limit N] [--since YYYY-MM-DD] [--format json|jsonl|csv] [--output-file PATH]`
-- **Run class resolve**: `~/Dev/peloton-workout-extract/peloton-class-resolve.sh [--class-id ID ...] [--workout-id ID ...] [--stdin] [--format json|jsonl|csv] [--timezone ZONE]`
+- **Run class resolve**: `~/Dev/peloton-workout-extract/peloton-class-resolve.sh [--class-id ID_OR_URL ...] [--workout-id ID_OR_URL ...] [--stdin] [--format json|jsonl|csv] [--timezone ZONE]`
 - **1Password item**: `op://Vault-agent-mandy/www.onepeloton.com/{username,password}` (no 2FA)
 - **Session cache**: `~/.cache/peloton-skill/storage_state.json` (chmod 600)
 - **Debug logs**: `~/.cache/peloton-skill/logs/`
@@ -70,6 +70,17 @@ score-matching for any workout whose ID is known. The class link is a fact
   (`2026-01-02 14:30 (-05)` is a Pacific wall clock with an Eastern label —
   the scraper's ET-default bug). The wall-clock time matches what this tool
   emits; the offset does not. Match on the time, not the label.
+- Accepts **class URLs and workout URLs** as well as bare ids. Only `classId`
+  is read from a class URL; `categorySlug` and the account-tied `code=` share
+  token are ignored. A workout URL passed to `--class-id` is an error naming
+  the right flag, never a silent lookup of the wrong id.
+- **Works on classes never taken**, so a zone plan can be previewed before
+  riding. That is what closed the old class-scrape request (#4).
+- The plan comes back two ways: `zones` (per-zone totals) and `segments` (the
+  ordered blocks). Repeated zones stay separate in `segments` and are only
+  collapsed in `zones`. CSV carries `segment_count` only.
+- Zone totals sum to slightly **less** than class duration — warmup and
+  cooldown carry no `power_zone` metric. Expected, not a parsing bug.
 - A workout with no class resolves to `{"workout_id": ..., "class_id": null}`
   rather than being dropped, so "no class" stays distinguishable from "not
   looked up".

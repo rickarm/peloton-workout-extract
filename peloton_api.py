@@ -285,6 +285,7 @@ class PelotonAPI:
                 t.get("name") for t in (details.get("class_types") or []) if t.get("name")
             ],
             "zones": sum_target_zones(details),
+            "segments": target_segments(details),
             "class_url": CLASS_URL_TEMPLATE.format(discipline=discipline, class_id=class_id),
         }
 
@@ -395,6 +396,37 @@ def sum_target_zones(details: dict) -> dict[int, int]:
             if isinstance(zone, int):
                 zones[zone] = zones.get(zone, 0) + seconds
     return zones
+
+
+def target_segments(details: dict) -> list[dict]:
+    """The ordered power-zone plan from a `/api/ride/<id>/details` body.
+
+    Distinct from `sum_target_zones()`, which rolls the same data up per zone.
+    The sequence is what shows the *shape* of a ride — three separate minutes in
+    zone 5 read very differently from one three-minute block — so a repeated
+    zone stays as separate entries here and is only collapsed by the totals.
+
+    Offsets are inclusive on both ends, so `duration_sec` is `end - start + 1`.
+    """
+    segments: list[dict] = []
+    metrics = (details.get("target_metrics_data") or {}).get("target_metrics") or []
+    for segment in metrics:
+        offsets = segment.get("offsets") or {}
+        start, end = offsets.get("start"), offsets.get("end")
+        if not isinstance(start, int) or not isinstance(end, int) or end < start:
+            continue
+        for metric in segment.get("metrics") or []:
+            if metric.get("name") != "power_zone":
+                continue
+            zone = metric.get("lower")
+            if isinstance(zone, int):
+                segments.append({
+                    "zone": zone,
+                    "start_sec": start,
+                    "end_sec": end,
+                    "duration_sec": end - start + 1,
+                })
+    return segments
 
 
 def _instructor_display_name(payload: dict) -> str | None:
