@@ -36,6 +36,21 @@ cached at `~/.cache/peloton-skill/storage_state.json` (chmod 600; move it with
 `PELOTON_CACHE_DIR`). **That file holds a live Peloton bearer token**, which
 the API tools reuse until it expires (48h), so treat it as a secret.
 
+### Where the workout CSV goes
+
+`peloton-csv-download.sh` saves `<username>_workouts*.csv` to `PELOTON_CSV_DIR`
+(environment variable; default `~/.local/share/peloton-sync/csv`, created with
+mode 700). `sync-peloton-airtable` reads the newest CSV from the same
+directory, so set it once for both, or leave the default. `--output-dir`
+overrides it for one run.
+
+It refuses `~/Downloads`, `~/Desktop`, `~/Documents` and any git repo. macOS
+protects those folders per app, and a process without the permission doesn't
+get an error: it hangs at the download. If no CSV lands within `--timeout`
+seconds (default 120, or `PELOTON_CSV_TIMEOUT`) of the download click, the
+script exits 3 with a message instead. The file is written as `.part` and
+renamed when complete.
+
 First run — capture a login session:
 
 ```bash
@@ -223,6 +238,7 @@ workout to a class by score. Three things are worth knowing:
 |------|---------|
 | `peloton_extract.py` | CLI entrypoint — workout page scraping |
 | `peloton_csv_download.py` | CLI entrypoint — workout CSV export |
+| `csv_dir.py` | Where the CSV goes (`PELOTON_CSV_DIR`), shared rules with sync-peloton-airtable |
 | `peloton_workout_ids.py` | CLI entrypoint — workout IDs from the Peloton API |
 | `peloton_class_resolve.py` | CLI entrypoint — class metadata and planned power zones |
 | `peloton_api.py` | Peloton REST client (token extraction, paging, merge-key formatting) |
