@@ -5,7 +5,7 @@ Extract structured metadata + Power Zone breakdowns from Peloton workout detail 
 ## Quick reference
 
 - **Run extract**: `~/Dev/peloton-workout-extract/peloton-extract.sh <URL> [--dry-run] [--headed] [--format jsonl]`
-- **Run CSV download**: `~/Dev/peloton-workout-extract/peloton-csv-download.sh [--headed] [--output-dir /tmp]`
+- **Run CSV download**: `~/Dev/peloton-workout-extract/peloton-csv-download.sh [--headed] [--output-dir DIR] [--timeout SECONDS]`. Saves to `PELOTON_CSV_DIR` (default `~/.local/share/peloton-sync/csv`, mode 700), the same directory sync-peloton-airtable reads. Never `~/Downloads`/`~/Desktop`/`~/Documents`: macOS protects them per app and an agent without the permission hangs at the download click with no error. A stalled download exits 3 after the timeout (default 120s).
 - **Run workout-ID export**: `~/Dev/peloton-workout-extract/peloton-workout-ids.sh [--all|--limit N] [--since YYYY-MM-DD] [--format json|jsonl|csv] [--output-file PATH]`
 - **Run class resolve**: `~/Dev/peloton-workout-extract/peloton-class-resolve.sh [--class-id ID_OR_URL ...] [--workout-id ID_OR_URL ...] [--stdin] [--format json|jsonl|csv] [--timezone ZONE]`
 - **Credentials**: `PELOTON_EMAIL` / `PELOTON_PASSWORD` from the process environment, injected by the caller (`op run --environment "$OP_ENVIRONMENT_ID" -- <wrapper>`). No local secrets file is read. Optional fallback: `PELOTON_OP_VAULT` (+ `PELOTON_OP_ITEM`, default `www.onepeloton.com`) makes `auth.py` `op read` the `username`/`password` fields. No 2FA.
@@ -19,6 +19,7 @@ Extract structured metadata + Power Zone breakdowns from Peloton workout detail 
 |------|---------|
 | `peloton_extract.py` | CLI entrypoint — validates URLs, orchestrates browser, emits JSON |
 | `peloton_csv_download.py` | CLI entrypoint for CSV export via headless Playwright |
+| `csv_dir.py` | Resolves `PELOTON_CSV_DIR`, refuses protected folders and git repos; mirrored in sync-peloton-airtable's `peloton-sync.sh` |
 | `peloton_workout_ids.py` | CLI entrypoint — workout IDs from the Peloton API, keyed by the CSV merge key |
 | `peloton_class_resolve.py` | CLI entrypoint — class metadata + planned power zones, by class ID or workout ID |
 | `peloton_api.py` | Peloton REST client — token extraction, paging, timestamp formatting |
