@@ -8,8 +8,8 @@ Extract structured metadata + Power Zone breakdowns from Peloton workout detail 
 - **Run CSV download**: `~/Dev/peloton-workout-extract/peloton-csv-download.sh [--headed] [--output-dir /tmp]`
 - **Run workout-ID export**: `~/Dev/peloton-workout-extract/peloton-workout-ids.sh [--all|--limit N] [--since YYYY-MM-DD] [--format json|jsonl|csv] [--output-file PATH]`
 - **Run class resolve**: `~/Dev/peloton-workout-extract/peloton-class-resolve.sh [--class-id ID_OR_URL ...] [--workout-id ID_OR_URL ...] [--stdin] [--format json|jsonl|csv] [--timezone ZONE]`
-- **1Password item**: `op://Vault-agent-mandy/www.onepeloton.com/{username,password}` (no 2FA)
-- **Session cache**: `~/.cache/peloton-skill/storage_state.json` (chmod 600)
+- **Credentials**: `PELOTON_EMAIL` / `PELOTON_PASSWORD` from the process environment, injected by the caller (`op run --environment "$OP_ENVIRONMENT_ID" -- <wrapper>`). No local secrets file is read. Optional fallback: `PELOTON_OP_VAULT` (+ `PELOTON_OP_ITEM`, default `www.onepeloton.com`) makes `auth.py` `op read` the `username`/`password` fields. No 2FA.
+- **Session cache**: `~/.cache/peloton-skill/storage_state.json` (chmod 600; override dir with `PELOTON_CACHE_DIR`). Holds a live Peloton bearer token, so it is a secret
 - **Debug logs**: `~/.cache/peloton-skill/logs/`
 - **Airtable target** (downstream, not this tool): base `appBmQA2p3z2Fdofa`, table `tblht11eg2nJ5gh3o` (Peloton-Rides)
 
@@ -91,7 +91,7 @@ score-matching for any workout whose ID is known. The class link is a fact
 ## Gotchas
 
 - Cookie banner appears on first visit even with saved session — script dismisses it automatically
-- `OP_SERVICE_ACCOUNT_TOKEN` must be exported before running — the shell wrappers handle this automatically
+- The wrappers do NOT load credentials. Run them under `op run --environment ...` (or with the env vars exported); otherwise a login-requiring run exits 2 naming the missing variable. Runs with a fresh cached session need no credentials at all
 - `class_timestamp` must be formatted as `YYYY-MM-DD HH:mm (ZZ)` (e.g. `2026-04-17 07:00 (-07)`) to match the Peloton-Rides Airtable table. `format_class_timestamp()` handles this.
 - Peloton timestamps without timezone (e.g. `Mon 11/24/25 @ 6:30 AM`) default to ET (EST/EDT by month). `AM`/`PM` must be excluded from timezone regex matching.
 - Airtable sync workflow is defined in the skill file (`~/.claude/skills/peloton-extract/SKILL.md`), not here — that's the source of truth for field mappings, duplicate checks, and instructor lookup.

@@ -10,24 +10,44 @@ uv sync
 uv run playwright install chromium
 ```
 
-Requires:
-- 1Password CLI (`op`) with access to `Vault-agent-mandy`
-- Peloton credentials stored as `www.onepeloton.com` in that vault
+### Credentials
+
+The scripts read `PELOTON_EMAIL` and `PELOTON_PASSWORD` from the process
+environment. Nothing reads or sources a local secrets file; the caller injects
+them, normally from a 1Password Environment:
+
+```bash
+op run --environment "$OP_ENVIRONMENT_ID" -- ./peloton-csv-download.sh
+```
+
+`op run --environment` needs a 1Password CLI build with Environments support
+(2.33.0-beta.02 or later; the stable 2.35.0 does not have it). The caller also
+provides `OP_SERVICE_ACCOUNT_TOKEN`; it never comes from a file. Missing
+credentials exit with status 2 and a message naming the missing variable,
+without printing any value.
+
+Optional fallback: set `PELOTON_OP_VAULT` (and optionally `PELOTON_OP_ITEM`,
+default `www.onepeloton.com`) to have `auth.py` read the `username` and
+`password` fields with `op read` instead. `OP_CLI` overrides which `op` binary
+is used. Prefer the environment path; nothing is tied to a particular vault.
+
+Credentials are only needed when the browser has to log in. The session is
+cached at `~/.cache/peloton-skill/storage_state.json` (chmod 600; move it with
+`PELOTON_CACHE_DIR`). **That file holds a live Peloton bearer token**, which
+the API tools reuse until it expires (48h), so treat it as a secret.
 
 First run — capture a login session:
 
 ```bash
-source ~/.openclaw/.env && export OP_SERVICE_ACCOUNT_TOKEN
-uv run python peloton_extract.py <WORKOUT_URL> --headed
+op run --environment "$OP_ENVIRONMENT_ID" -- uv run python peloton_extract.py <WORKOUT_URL> --headed
 ```
-
-Subsequent runs reuse the saved session at `~/.cache/peloton-skill/storage_state.json`.
 
 ## Usage
 
-```bash
-source ~/.openclaw/.env && export OP_SERVICE_ACCOUNT_TOKEN
+Run every command below under `op run --environment "$OP_ENVIRONMENT_ID" --`
+(see Credentials), or with `PELOTON_EMAIL`/`PELOTON_PASSWORD` already exported.
 
+```bash
 # Single workout
 uv run python peloton_extract.py https://members.onepeloton.com/profile/workouts/<id>
 
@@ -56,8 +76,6 @@ tool pulls the IDs from the Peloton API and emits them alongside a
 join the two on its existing merge key.
 
 ```bash
-source ~/.openclaw/.env && export OP_SERVICE_ACCOUNT_TOKEN
-
 # 100 most recent workouts (default)
 ./peloton-workout-ids.sh
 
@@ -209,7 +227,7 @@ workout to a class by score. Three things are worth knowing:
 | `peloton_class_resolve.py` | CLI entrypoint — class metadata and planned power zones |
 | `peloton_api.py` | Peloton REST client (token extraction, paging, merge-key formatting) |
 | `pel_selectors.py` | Playwright selector inventory (update here when Peloton changes UI) |
-| `auth.py` | 1Password credential fetch + session persistence |
+| `auth.py` | Credentials from the environment (optional `op read` fallback) + session persistence |
 | `tests/` | Unit tests for the pure logic — no network, no browser |
 
 ## Notes
